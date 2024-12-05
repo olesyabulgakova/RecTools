@@ -17,11 +17,12 @@ from rectools import Columns, ExternalIds
 from rectools.dataset import Dataset, Interactions
 from rectools.dataset.features import SparseFeatures
 from rectools.dataset.identifiers import IdMap
-from rectools.models.base import ErrorBehaviour, InternalRecoTriplet, ModelBase
+from rectools.models.base import ErrorBehaviour, InternalRecoTriplet, ModelBase, ModelConfig, ModelConfig_T
 from rectools.models.rank import Distance, ImplicitRanker
 from rectools.types import InternalIdsArray
 
 PADDING_VALUE = "PAD"
+
 
 # pylint: disable=too-many-lines
 # ####  --------------  Net blocks  --------------  #### #
@@ -539,11 +540,13 @@ class TransformerBasedSessionEncoder(torch.nn.Module):
             n_heads=n_heads,
             dropout_rate=dropout_rate,
         )
+        self.use_pos_emb = use_pos_emb
         self.use_causal_attn = use_causal_attn
         self.use_key_padding_mask = use_key_padding_mask
         self.n_factors = n_factors
         self.dropout_rate = dropout_rate
         self.n_heads = n_heads
+        self.n_blocks = n_blocks
 
         self.item_net_block_types = item_net_block_types
 
@@ -1112,7 +1115,7 @@ class SessionEncoderLightningModule(SessionEncoderLightningModuleBase):
                 pass
 
 
-class TransformerModelBase(ModelBase):
+class TransformerModelBase(ModelBase[ModelConfig_T]):
     """
     Base model for all recommender algorithms that work on transformer architecture (e.g. SASRec, Bert4Rec).
     To create a custom transformer model it is necessary to inherit from this class
@@ -1178,6 +1181,8 @@ class TransformerModelBase(ModelBase):
         self.lr = lr
         self.loss = loss
         self.gbce_t = gbce_t
+        self.deterministic = deterministic
+        self.epochs = epochs
 
     def _fit(
         self,
@@ -1292,7 +1297,37 @@ class TransformerModelBase(ModelBase):
 # ####  --------------  SASRec Model  --------------  #### #
 
 
-class SASRecModel(TransformerModelBase):
+class SASRecModelConfig(ModelConfig):
+    """Config for `SASRec` model."""
+
+    n_blocks: int = 1
+    n_heads: int = 1
+    n_factors: int = 128
+    use_pos_emb: bool = True
+    use_causal_attn: bool = True
+    use_key_padding_mask: bool = False
+    dropout_rate: float = 0.2
+    session_max_len: int = 32
+    dataloader_num_workers: int = 0
+    batch_size: int = 128
+    loss: str = "softmax"
+    n_negatives: int = 1
+    gbce_t: float = 0.2
+    lr: float = 0.01
+    epochs: int = 3
+    verbose: int = 0
+    deterministic: bool = False
+    cpu_n_threads: int = 0
+    train_min_user_interaction: int = (2,)
+    trainer: tp.Optional[str] = None # TODO: change
+    item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (IdEmbeddingsItemNet, CatFeaturesItemNet)
+    pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding
+    transformer_layers_type: tp.Type[TransformerLayersBase] = SASRecTransformerLayers
+    data_preparator_type: tp.Type[SessionEncoderDataPreparatorBase] = SASRecDataPreparator
+    lightning_module_type: tp.Type[SessionEncoderLightningModuleBase] = SessionEncoderLightningModule
+
+
+class SASRecModel(TransformerModelBase[SASRecModelConfig]):
     """TODO"""
 
     def __init__(  # pylint: disable=too-many-arguments, too-many-locals
@@ -1352,4 +1387,63 @@ class SASRecModel(TransformerModelBase):
             batch_size=batch_size,
             dataloader_num_workers=dataloader_num_workers,
             train_min_user_interactions=train_min_user_interaction,
+        )
+
+    def _get_config(self) -> SASRecModelConfig:
+        return SASRecModelConfig(
+            n_blocks=self._torch_model.n_blocks,
+            n_heads=self._torch_model.n_heads,
+            n_factors=self._torch_model.n_factors,
+            use_pos_emb=self._torch_model.use_pos_emb,
+            use_causal_attn=self._torch_model.use_causal_attn,
+            use_key_padding_mask=self._torch_model.use_key_padding_mask,
+            dropout_rate=self._torch_model.dropout_rate,
+            session_max_len=self.data_preparator.session_max_len,
+            dataloader_num_workers=self.data_preparator.dataloader_num_workers,
+            batch_size=self.data_preparator.batch_size,
+            loss=self.loss,
+            n_negatives=self.data_preparator.n_negatives,
+            gbce_t=self.gbce_t,
+            lr=self.lightning_model.lr,
+            epochs=self.epochs,
+            verbose=self.verbose,
+            deterministic=self.deterministic,
+            cpu_n_threads=self.n_threads,
+            train_min_user_interaction=self.data_preparator.train_min_user_interactions,
+            trainer=None,  # TODO: warning that we can't do this
+            item_net_block_types=self._torch_model.item_net_block_types,
+            pos_encoding_type=self._torch_model.pos_encoding.__class__,
+            transformer_layers_type=self._torch_model.transformer_layers.__class__,
+            data_preparator_type=self.data_preparator.__class__,
+            lightning_module_type=self.lightning_module_type,
+        )
+
+    @classmethod
+    def _from_config(cls, config: SASRecModelConfig) -> tpe.Self:
+        return cls(
+            n_blocks=config.n_blocks,
+            n_heads=config.n_heads,
+            n_factors=config.n_factors,
+            use_pos_emb=config.use_pos_emb,
+            use_causal_attn=config.use_causal_attn,
+            use_key_padding_mask=config.use_key_padding_mask,
+            dropout_rate=config.dropout_rate,
+            session_max_len=config.session_max_len,
+            dataloader_num_workers=config.dataloader_num_workers,
+            batch_size=config.batch_size,
+            loss=config.loss,
+            n_negatives=config.n_negatives,
+            gbce_t=config.gbce_t,
+            lr=config.lr,
+            epochs=config.epochs,
+            verbose=config.verbose,
+            deterministic=config.deterministic,
+            cpu_n_threads=config.cpu_n_threads,
+            train_min_user_interaction=config.train_min_user_interaction,
+            trainer=config.trainer,
+            item_net_block_types=config.item_net_block_types,
+            pos_encoding_type=config.pos_encoding_type,
+            transformer_layers_type=config.transformer_layers_type,
+            data_preparator_type=config.data_preparator_type,
+            lightning_module_type=config.lightning_module_type,
         )

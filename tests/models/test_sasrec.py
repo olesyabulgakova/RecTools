@@ -23,6 +23,12 @@ from tests.models.utils import assert_second_fit_refits_model
 from tests.testing_utils import assert_feature_set_equal, assert_id_map_equal, assert_interactions_set_equal
 
 from .data import DATASET, INTERACTIONS
+from .utils import (
+    assert_default_config_and_default_model_params_are_the_same,
+    assert_dumps_loads_do_not_change_model,
+    assert_get_config_and_from_config_compatibility,
+    assert_second_fit_refits_model,
+)
 
 
 class TestSASRecModel:
@@ -373,6 +379,52 @@ class TestSASRecModel:
                 but some of given users are cold: they are not in the `dataset.user_id_map`
             """
         )
+
+    def test_dumps_loads(self, dataset: Dataset) -> None:
+        model = SASRecModel()
+        model.fit(dataset)
+        assert_dumps_loads_do_not_change_model(model, dataset)
+
+
+class TestSASRecModelConfiguration:
+    # def test_from_config(self) -> None:
+    #     config = {
+    #         "regularization": 500,
+    #         "num_threads": 1,
+    #         "verbose": 1,
+    #     }
+    #     model = SASRecModel.from_config(config)
+    #     assert model.num_threads == 1
+    #     assert model.verbose == 1
+    #     assert model.regularization == 500
+
+    # def test_get_config(self) -> None:
+    #     model = SASRecModel(
+    #         regularization=500,
+    #         num_threads=1,
+    #         verbose=1,
+    #     )
+    #     config = model.get_config()
+    #     expected = {
+    #         "regularization": 500,
+    #         "num_threads": 1,
+    #         "verbose": 1,
+    #     }
+    #     assert config == expected
+
+    # @pytest.mark.parametrize("simple_types", (False, True))
+    # def test_get_config_and_from_config_compatibility(self, simple_types: bool) -> None:
+    #     initial_config = {
+    #         "regularization": 500,
+    #         "num_threads": 1,
+    #         "verbose": 1,
+    #     }
+    #     assert_get_config_and_from_config_compatibility(SASRecModel, DATASET, initial_config, simple_types)
+
+    def test_default_config_and_default_model_params_are_the_same(self) -> None:
+        default_config: tp.Dict[str, int] = {}
+        model = SASRecModel()
+        assert_default_config_and_default_model_params_are_the_same(model, default_config)
 
 
 class TestSequenceDataset:
