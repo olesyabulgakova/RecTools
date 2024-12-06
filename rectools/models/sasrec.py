@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 import typing_extensions as tpe
+from pydantic import BeforeValidator, PlainSerializer
 from pytorch_lightning import LightningModule, Trainer
 from scipy import sparse
 from torch import nn
@@ -20,6 +21,7 @@ from rectools.dataset.identifiers import IdMap
 from rectools.models.base import ErrorBehaviour, InternalRecoTriplet, ModelBase, ModelConfig, ModelConfig_T
 from rectools.models.rank import Distance, ImplicitRanker
 from rectools.types import InternalIdsArray
+from rectools.utils.misc import get_class_or_function_full_path, import_object
 
 PADDING_VALUE = "PAD"
 
@@ -1147,7 +1149,7 @@ class TransformerModelBase(ModelBase[ModelConfig_T]):
         pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding,
         lightning_module_type: tp.Type[SessionEncoderLightningModuleBase] = SessionEncoderLightningModule,
     ) -> None:
-        super().__init__(verbose)
+        super().__init__(verbose=verbose)
         self.n_threads = cpu_n_threads
         self._torch_model = TransformerBasedSessionEncoder(
             n_blocks=n_blocks,
@@ -1298,36 +1300,34 @@ class TransformerModelBase(ModelBase[ModelConfig_T]):
 
 # ####  --------------  SASRec Model  --------------  #### #
 
-from pydantic import BeforeValidator, ConfigDict, PlainSerializer
-from rectools.utils.misc import get_class_or_function_full_path, import_object
 
-def _get_class(spec: tp.Any) -> tp.Any:
+def _get_class_obj(spec: tp.Any) -> tp.Any:
     if not isinstance(spec, str):
         return spec
     return import_object(spec)
 
-def _get_sequence_classes(spec: tp.Sequence[tp.Any]) -> tp.Any:
-    return tuple(map(_get_class, spec))
 
-def _serialize_type(obj: tp.Type) -> str:
-    return get_class_or_function_full_path(obj)
+def _get_class_obj_sequence(spec: tp.Sequence[tp.Any]) -> tp.Any:
+    return tuple(map(_get_class_obj, spec))
+
 
 def _serialize_type_sequence(obj: tp.Sequence[tp.Type]) -> tp.Sequence[str]:
-    return tuple(map(_serialize_type, obj))
+    return tuple(map(get_class_or_function_full_path, obj))
 
-SomeModuleClass = tpe.Annotated[
-    tp.Type[tp.Union[nn.Module, SessionEncoderDataPreparatorBase, SessionEncoderLightningModuleBase]],
-    BeforeValidator(_get_class),
+
+ModuleType = tpe.Annotated[
+    tp.Type[tp.Union[nn.Module, SessionEncoderDataPreparatorBase, SessionEncoderLightningModuleBase],],
+    BeforeValidator(_get_class_obj),
     PlainSerializer(
-        func=_serialize_type,  # get_class_or_function_full_path,
+        func=get_class_or_function_full_path,
         return_type=str,
         when_used="json",
     ),
 ]
 
-SomeModuleSequence = tpe.Annotated[
-    tp.Sequence[tp.Type[tp.Union[nn.Module]]],
-    BeforeValidator(_get_sequence_classes),
+ModuleTypeSequence = tpe.Annotated[
+    tp.Sequence[tp.Type[nn.Module]],
+    BeforeValidator(_get_class_obj_sequence),
     PlainSerializer(
         func=_serialize_type_sequence,
         return_type=str,
@@ -1358,16 +1358,17 @@ class SASRecModelConfig(ModelConfig):
     deterministic: bool = False
     cpu_n_threads: int = 0
     train_min_user_interaction: int = 2
-    trainer: tp.Optional[str] = None  # TODO: change
-    item_net_block_types: SomeModuleSequence = (IdEmbeddingsItemNet, CatFeaturesItemNet)
-    pos_encoding_type: SomeModuleClass = LearnableInversePositionalEncoding
-    transformer_layers_type: SomeModuleClass = SASRecTransformerLayers
-    data_preparator_type: SomeModuleClass = SASRecDataPreparator
-    lightning_module_type: SomeModuleClass = SessionEncoderLightningModule
+    trainer: tp.Optional[str] = None  # TODO: can't really do anything about it?
+    item_net_block_types: ModuleTypeSequence = (IdEmbeddingsItemNet, CatFeaturesItemNet)
+    pos_encoding_type: ModuleType = LearnableInversePositionalEncoding
+    transformer_layers_type: ModuleType = SASRecTransformerLayers
+    data_preparator_type: ModuleType = SASRecDataPreparator
+    lightning_module_type: ModuleType = SessionEncoderLightningModule
 
 
 class SASRecModel(TransformerModelBase[SASRecModelConfig]):
     """TODO"""
+
     config_class = SASRecModelConfig
 
     def __init__(  # pylint: disable=too-many-arguments, too-many-locals
@@ -1451,7 +1452,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             deterministic=self.deterministic,
             cpu_n_threads=self.n_threads,
             train_min_user_interaction=self.data_preparator.train_min_user_interactions,
-            trainer=None,  # TODO: warning that we can't do this
+            trainer=None,  # TODO: can't really do anything about it?
             item_net_block_types=self._torch_model.item_net_block_types,
             pos_encoding_type=self._torch_model.pos_encoding.__class__,
             transformer_layers_type=self._torch_model.transformer_layers.__class__,

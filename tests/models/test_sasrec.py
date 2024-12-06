@@ -15,18 +15,19 @@ from rectools.models.sasrec import (
     IdEmbeddingsItemNet,
     ItemNetBase,
     ItemNetConstructor,
+    LearnableInversePositionalEncoding,
     SASRecDataPreparator,
     SASRecModel,
+    SASRecTransformerLayers,
     SequenceDataset,
+    SessionEncoderLightningModule,
 )
-from tests.models.utils import assert_second_fit_refits_model
 from tests.testing_utils import assert_feature_set_equal, assert_id_map_equal, assert_interactions_set_equal
 
 from .data import DATASET, INTERACTIONS
 from .utils import (
     assert_default_config_and_default_model_params_are_the_same,
     assert_dumps_loads_do_not_change_model,
-    assert_get_config_and_from_config_compatibility,
     assert_second_fit_refits_model,
 )
 
@@ -387,39 +388,174 @@ class TestSASRecModel:
 
 
 class TestSASRecModelConfiguration:
-    # def test_from_config(self) -> None:
-    #     config = {
-    #         "regularization": 500,
-    #         "num_threads": 1,
-    #         "verbose": 1,
-    #     }
-    #     model = SASRecModel.from_config(config)
-    #     assert model.num_threads == 1
-    #     assert model.verbose == 1
-    #     assert model.regularization == 500
+    def setup_method(self) -> None:
+        self._seed_everything()
 
-    # def test_get_config(self) -> None:
-    #     model = SASRecModel(
-    #         regularization=500,
-    #         num_threads=1,
-    #         verbose=1,
-    #     )
-    #     config = model.get_config()
-    #     expected = {
-    #         "regularization": 500,
-    #         "num_threads": 1,
-    #         "verbose": 1,
-    #     }
-    #     assert config == expected
+    def _seed_everything(self) -> None:
+        torch.use_deterministic_algorithms(True)
+        seed_everything(32, workers=True)
 
-    # @pytest.mark.parametrize("simple_types", (False, True))
-    # def test_get_config_and_from_config_compatibility(self, simple_types: bool) -> None:
-    #     initial_config = {
-    #         "regularization": 500,
-    #         "num_threads": 1,
-    #         "verbose": 1,
-    #     }
-    #     assert_get_config_and_from_config_compatibility(SASRecModel, DATASET, initial_config, simple_types)
+    def test_from_config(self) -> None:
+        config = {
+            "n_blocks": 2,
+            "n_heads": 4,
+            "n_factors": 64,
+            "use_pos_emb": False,
+            "use_causal_attn": False,
+            "use_key_padding_mask": True,
+            "dropout_rate": 0.5,
+            "session_max_len": 10,
+            "dataloader_num_workers": 5,
+            "batch_size": 1024,
+            "loss": "BCE",
+            "n_negatives": 10,
+            "gbce_t": 0.5,
+            "lr": 0.001,
+            "epochs": 10,
+            "verbose": 1,
+            "deterministic": True,
+            "cpu_n_threads": 10,
+            "train_min_user_interaction": 5,
+            "trainer": None,
+            "item_net_block_types": (IdEmbeddingsItemNet,),
+            "pos_encoding_type": LearnableInversePositionalEncoding,
+            "transformer_layers_type": SASRecTransformerLayers,
+            "data_preparator_type": SASRecDataPreparator,
+            "lightning_module_type": SessionEncoderLightningModule,
+        }
+        model = SASRecModel.from_config(config)
+        assert model._torch_model.n_blocks == 2
+        assert model._torch_model.n_heads == 4
+        assert model._torch_model.n_factors == 64
+        assert model._torch_model.use_pos_emb is False
+        assert model._torch_model.use_causal_attn is False
+        assert model._torch_model.use_key_padding_mask is True
+        assert model._torch_model.dropout_rate == 0.5
+        assert model.data_preparator.session_max_len == 10
+        assert model.data_preparator.dataloader_num_workers == 5
+        assert model.data_preparator.batch_size == 1024
+        assert model.loss == "BCE"
+        assert model.n_negatives == 10
+        assert model.gbce_t == 0.5
+        assert model.lr == 0.001
+        assert model.epochs == 10
+        assert model.verbose == 1
+        assert model.deterministic is True
+        assert model.n_threads == 10
+        assert model.data_preparator.train_min_user_interactions == 5
+        # we can't check trainer
+        assert model._torch_model.item_net_block_types == (IdEmbeddingsItemNet,)
+        assert model._torch_model.pos_encoding.__class__ == LearnableInversePositionalEncoding
+        assert model._torch_model.transformer_layers.__class__ == SASRecTransformerLayers
+        assert model.data_preparator.__class__ == SASRecDataPreparator
+        assert model.lightning_module_type == SessionEncoderLightningModule
+
+    def test_get_config(self) -> None:
+        model = SASRecModel(
+            n_blocks=2,
+            n_heads=4,
+            n_factors=64,
+            use_pos_emb=False,
+            use_causal_attn=False,
+            use_key_padding_mask=True,
+            dropout_rate=0.5,
+            session_max_len=10,
+            dataloader_num_workers=5,
+            batch_size=1024,
+            loss="BCE",
+            n_negatives=10,
+            gbce_t=0.5,
+            lr=0.001,
+            epochs=10,
+            verbose=1,
+            deterministic=True,
+            cpu_n_threads=10,
+            train_min_user_interaction=5,
+            # we can't check trainer
+            item_net_block_types=(IdEmbeddingsItemNet,),
+            pos_encoding_type=LearnableInversePositionalEncoding,
+            transformer_layers_type=SASRecTransformerLayers,
+            data_preparator_type=SASRecDataPreparator,
+            lightning_module_type=SessionEncoderLightningModule,
+        )
+        config = model.get_config()
+        expected = {
+            "cls": None,
+            "n_blocks": 2,
+            "n_heads": 4,
+            "n_factors": 64,
+            "use_pos_emb": False,
+            "use_causal_attn": False,
+            "use_key_padding_mask": True,
+            "dropout_rate": 0.5,
+            "session_max_len": 10,
+            "dataloader_num_workers": 5,
+            "batch_size": 1024,
+            "loss": "BCE",
+            "n_negatives": 10,
+            "gbce_t": 0.5,
+            "lr": 0.001,
+            "epochs": 10,
+            "verbose": 1,
+            "deterministic": True,
+            "cpu_n_threads": 10,
+            "train_min_user_interaction": 5,
+            "trainer": None,
+            "item_net_block_types": (IdEmbeddingsItemNet,),
+            "pos_encoding_type": LearnableInversePositionalEncoding,
+            "transformer_layers_type": SASRecTransformerLayers,
+            "data_preparator_type": SASRecDataPreparator,
+            "lightning_module_type": SessionEncoderLightningModule,
+        }
+        assert config == expected
+
+    @pytest.mark.parametrize("simple_types", (False, True))
+    def test_get_config_and_from_config_compatibility(self, simple_types: bool) -> None:
+        initial_config = {
+            "n_blocks": 1,
+            "n_heads": 1,
+            "n_factors": 10,
+            "use_pos_emb": False,
+            "use_causal_attn": False,
+            "use_key_padding_mask": True,
+            "dropout_rate": 0.5,
+            "session_max_len": 5,
+            "dataloader_num_workers": 1,
+            "batch_size": 100,
+            "loss": "BCE",
+            "n_negatives": 4,
+            "gbce_t": 0.5,
+            "lr": 0.001,
+            "epochs": 1,
+            "verbose": 0,
+            "deterministic": True,
+            "cpu_n_threads": 10,
+            "train_min_user_interaction": 2,
+            "trainer": None,
+            "item_net_block_types": (IdEmbeddingsItemNet,),
+            "pos_encoding_type": LearnableInversePositionalEncoding,
+            "transformer_layers_type": SASRecTransformerLayers,
+            "data_preparator_type": SASRecDataPreparator,
+            "lightning_module_type": SessionEncoderLightningModule,
+        }
+
+        dataset = DATASET
+        model = SASRecModel
+
+        def get_reco(model: SASRecModel) -> pd.DataFrame:
+            return model.fit(dataset).recommend(users=np.array([10, 20]), dataset=dataset, k=2, filter_viewed=False)
+
+        model_1 = model.from_config(initial_config)
+        reco_1 = get_reco(model_1)
+        config_1 = model_1.get_config(simple_types=simple_types)
+
+        self._seed_everything()
+        model_2 = model.from_config(config_1)
+        reco_2 = get_reco(model_2)
+        config_2 = model_2.get_config(simple_types=simple_types)
+
+        assert config_1 == config_2
+        pd.testing.assert_frame_equal(reco_1, reco_2)
 
     def test_default_config_and_default_model_params_are_the_same(self) -> None:
         default_config: tp.Dict[str, int] = {}
