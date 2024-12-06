@@ -1135,6 +1135,7 @@ class TransformerModelBase(ModelBase[ModelConfig_T]):
         dropout_rate: float = 0.2,
         session_max_len: int = 32,
         loss: str = "softmax",
+        n_negatives: int = 1,
         gbce_t: float = 0.5,
         lr: float = 0.01,
         epochs: int = 3,
@@ -1180,6 +1181,7 @@ class TransformerModelBase(ModelBase[ModelConfig_T]):
         self.i2i_dist = Distance.COSINE
         self.lr = lr
         self.loss = loss
+        self.n_negatives = n_negatives
         self.gbce_t = gbce_t
         self.deterministic = deterministic
         self.epochs = epochs
@@ -1296,6 +1298,43 @@ class TransformerModelBase(ModelBase[ModelConfig_T]):
 
 # ####  --------------  SASRec Model  --------------  #### #
 
+from pydantic import BeforeValidator, ConfigDict, PlainSerializer
+from rectools.utils.misc import get_class_or_function_full_path, import_object
+
+def _get_class(spec: tp.Any) -> tp.Any:
+    if not isinstance(spec, str):
+        return spec
+    return import_object(spec)
+
+def _get_sequence_classes(spec: tp.Sequence[tp.Any]) -> tp.Any:
+    return tuple(map(_get_class, spec))
+
+def _serialize_type(obj: tp.Type) -> str:
+    return get_class_or_function_full_path(obj)
+
+def _serialize_type_sequence(obj: tp.Sequence[tp.Type]) -> tp.Sequence[str]:
+    return tuple(map(_serialize_type, obj))
+
+SomeModuleClass = tpe.Annotated[
+    tp.Type[tp.Union[nn.Module, SessionEncoderDataPreparatorBase, SessionEncoderLightningModuleBase]],
+    BeforeValidator(_get_class),
+    PlainSerializer(
+        func=_serialize_type,  # get_class_or_function_full_path,
+        return_type=str,
+        when_used="json",
+    ),
+]
+
+SomeModuleSequence = tpe.Annotated[
+    tp.Sequence[tp.Type[tp.Union[nn.Module]]],
+    BeforeValidator(_get_sequence_classes),
+    PlainSerializer(
+        func=_serialize_type_sequence,
+        return_type=str,
+        when_used="json",
+    ),
+]
+
 
 class SASRecModelConfig(ModelConfig):
     """Config for `SASRec` model."""
@@ -1318,17 +1357,18 @@ class SASRecModelConfig(ModelConfig):
     verbose: int = 0
     deterministic: bool = False
     cpu_n_threads: int = 0
-    train_min_user_interaction: int = (2,)
-    trainer: tp.Optional[str] = None # TODO: change
-    item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (IdEmbeddingsItemNet, CatFeaturesItemNet)
-    pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding
-    transformer_layers_type: tp.Type[TransformerLayersBase] = SASRecTransformerLayers
-    data_preparator_type: tp.Type[SessionEncoderDataPreparatorBase] = SASRecDataPreparator
-    lightning_module_type: tp.Type[SessionEncoderLightningModuleBase] = SessionEncoderLightningModule
+    train_min_user_interaction: int = 2
+    trainer: tp.Optional[str] = None  # TODO: change
+    item_net_block_types: SomeModuleSequence = (IdEmbeddingsItemNet, CatFeaturesItemNet)
+    pos_encoding_type: SomeModuleClass = LearnableInversePositionalEncoding
+    transformer_layers_type: SomeModuleClass = SASRecTransformerLayers
+    data_preparator_type: SomeModuleClass = SASRecDataPreparator
+    lightning_module_type: SomeModuleClass = SessionEncoderLightningModule
 
 
 class SASRecModel(TransformerModelBase[SASRecModelConfig]):
     """TODO"""
+    config_class = SASRecModelConfig
 
     def __init__(  # pylint: disable=too-many-arguments, too-many-locals
         self,
@@ -1370,6 +1410,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             dropout_rate=dropout_rate,
             session_max_len=session_max_len,
             loss=loss,
+            n_negatives=n_negatives,
             gbce_t=gbce_t,
             lr=lr,
             epochs=epochs,
@@ -1402,9 +1443,9 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             dataloader_num_workers=self.data_preparator.dataloader_num_workers,
             batch_size=self.data_preparator.batch_size,
             loss=self.loss,
-            n_negatives=self.data_preparator.n_negatives,
+            n_negatives=self.n_negatives,
             gbce_t=self.gbce_t,
-            lr=self.lightning_model.lr,
+            lr=self.lr,
             epochs=self.epochs,
             verbose=self.verbose,
             deterministic=self.deterministic,
